@@ -1,0 +1,8 @@
+# Python 3.13 (tested). Earlier versions (3.11+) should also work.
+#
+# Install:
+#   python3.13 -m pip install -r requirements.txt
+
+numpy
+PyQt6
+vqf            # gyro/accel orientation fusion (used by BrawGyroStabilizer)
