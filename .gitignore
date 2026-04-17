@@ -1,0 +1,17 @@
+build/
+dist/
+__pycache__/
+*.spec
+*.pyc
+.DS_Store
+swift/.build/
+swift/.swiftpm/
+swift/dist/
+swift/Package.resolved
+
+# Python prototype kept locally, not shipped
+stabilize.py
+braw_stab.py
+panomap_setting.py
+requirements.txt
+run.sh
