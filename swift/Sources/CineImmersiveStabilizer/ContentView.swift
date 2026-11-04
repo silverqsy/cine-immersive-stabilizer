@@ -37,16 +37,18 @@ final class Model: ObservableObject {
             yawOffset: yawOffset, tiltOffset: tiltOffset, rollOffset: rollOffset)
 
         do {
-            let collected = try await Task.detached(priority: .userInitiated) {
-                () throws -> (result: StabResult, logLines: String) in
-                var lines = ""
-                let r = try Stabilizer.process(braw: url, settings: settings) { line in
-                    lines += line + "\n"
+            let result = try await Task.detached(priority: .userInitiated) {
+                try Stabilizer.process(braw: url, settings: settings) { line in
+                    // Show each line as its stage starts. sync keeps the lines
+                    // in order and ahead of the result; it can't deadlock
+                    // because this method is suspended on the await while the
+                    // pipeline runs, leaving the main thread free.
+                    DispatchQueue.main.sync {
+                        MainActor.assumeIsolated { self.append(line) }
+                    }
                 }
-                return (r, lines)
             }.value
-            log += collected.logLines
-            settingText = PanoMapSetting.build(keyframes: collected.result.keyframes)
+            settingText = PanoMapSetting.build(keyframes: result.keyframes)
             status = "Ready — save or copy to clipboard."
             append("✅ PanoMap node ready.")
         } catch {
