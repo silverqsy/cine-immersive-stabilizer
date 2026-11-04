@@ -145,8 +145,19 @@ enum BrawHelper {
         do { try p.run() }
         catch { throw BrawHelperError.spawnFailed("\(error)") }
 
+        // Drain stderr on its own thread while this one drains stdout. Reading
+        // them one after the other deadlocks if the helper fills the stderr
+        // pipe while we're still waiting for stdout to finish. That takes very
+        // little: pipes stay at 512 bytes when the system is short on pipe
+        // memory, and the objc class-conflict warning alone is ~440 bytes.
+        var errData = Data()
+        let errDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            errDone.signal()
+        }
         let stdout = outPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        errDone.wait()
         p.waitUntilExit()
         let stderr = String(data: errData, encoding: .utf8) ?? ""
         return (stdout, stderr, p.terminationStatus)
