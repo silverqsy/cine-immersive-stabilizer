@@ -11,6 +11,7 @@ enum BrawHelperError: Error, LocalizedError {
     case missingHeader(String)
     case malformedHeader(String)
     case noGyroData
+    case timedOut(String, TimeInterval)
 
     var errorDescription: String? {
         switch self {
@@ -25,6 +26,9 @@ enum BrawHelperError: Error, LocalizedError {
             return "braw_helper JSON header malformed: \(line)"
         case .noGyroData:
             return "BRAW has no gyro samples."
+        case .timedOut(let mode, let seconds):
+            return "braw_helper \(mode) didn't finish within \(Int(seconds)) seconds "
+                + "and was stopped. Check that the volume holding the clip is reachable."
         }
     }
 }
@@ -132,6 +136,11 @@ enum BrawHelper {
 
     // ── subprocess plumbing ───────────────────────────────────────
 
+    /// The helper only reads metadata, which takes well under a second on a
+    /// healthy volume, so this is generous. It turns a stalled helper into an
+    /// error message instead of an endless spinner.
+    private static let helperTimeout: TimeInterval = 120
+
     private static func runCapture(_ url: URL, args: [String]) throws
         -> (stdout: Data, stderr: String, status: Int32)
     {
@@ -145,21 +154,27 @@ enum BrawHelper {
         do { try p.run() }
         catch { throw BrawHelperError.spawnFailed("\(error)") }
 
-        // Drain stderr on its own thread while this one drains stdout. Reading
-        // them one after the other deadlocks if the helper fills the stderr
-        // pipe while we're still waiting for stdout to finish. That takes very
-        // little: pipes stay at 512 bytes when the system is short on pipe
-        // memory, and the objc class-conflict warning alone is ~440 bytes.
+        // Read each pipe on its own thread. Reading them one after the other
+        // deadlocks if the helper fills the stderr pipe while we're still
+        // waiting for stdout to finish. That takes very little: pipes stay at
+        // 512 bytes when the system is short on pipe memory, and the objc
+        // class-conflict warning alone is ~440 bytes.
+        var outData = Data()
         var errData = Data()
-        let errDone = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .userInitiated).async {
-            errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            errDone.signal()
+        let queue = DispatchQueue.global(qos: .userInitiated)
+        let group = DispatchGroup()
+        queue.async(group: group) { outData = outPipe.fileHandleForReading.readDataToEndOfFile() }
+        queue.async(group: group) { errData = errPipe.fileHandleForReading.readDataToEndOfFile() }
+        queue.async(group: group) { p.waitUntilExit() }
+
+        if group.wait(timeout: .now() + helperTimeout) == .timedOut {
+            // Report the failure without waiting for the kill to take effect:
+            // a helper stuck in I/O on a dead network share can't die until
+            // that I/O returns. The threads above finish whenever it does.
+            if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+            throw BrawHelperError.timedOut(args.first ?? "", helperTimeout)
         }
-        let stdout = outPipe.fileHandleForReading.readDataToEndOfFile()
-        errDone.wait()
-        p.waitUntilExit()
         let stderr = String(data: errData, encoding: .utf8) ?? ""
-        return (stdout, stderr, p.terminationStatus)
+        return (outData, stderr, p.terminationStatus)
     }
 }
