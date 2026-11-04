@@ -168,11 +168,14 @@ enum Stabilizer {
             var R = qCorr.matrix.conjugatedByDiagonal(Self.cameraAxisDiag)
 
             if settings.horizonLock {
-                // De-roll so world-down stays vertical in output.
+                // De-roll so world-down stays vertical in output. +Y points down
+                // in the camera frame: an upright camera's accelerometer reads
+                // +1 g on IMU +Y, gravity is the opposite of that, and
+                // cameraAxisDiag negates Y. So level means gOut lands on +Y.
                 let Rraw = Q[i].matrix.conjugatedByDiagonal(Self.cameraAxisDiag)
                 let gCam = Rraw.transposeTimes((0, 0, -1))
                 let gOut = R.transposeTimes(gCam)
-                let rollAng = atan2(gOut.0, -gOut.1)
+                let rollAng = atan2(-gOut.0, gOut.1)
                 R = R.timesRotZ(rollAng)
             }
 
